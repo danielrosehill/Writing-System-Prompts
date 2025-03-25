@@ -38,30 +38,52 @@ def extract_markdown_info(file_path):
         title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
         title = title_match.group(1).strip() if title_match else os.path.basename(file_path).replace('.md', '')
         
-        # Extract description - try multiple patterns
-        # First try the standard format with "## Description" heading
-        desc_match = re.search(r'^##\s+Description\s*\n\s*(.+?)(?:\n\n|\n##|$)', content, re.MULTILINE | re.DOTALL)
+        # Extract description using multiple patterns
+        description = ""
         
+        # Pattern 1: Standard "## Description" section
+        desc_match = re.search(r'^##\s+Description\s*\n\s*(.+?)(?:\n\n|\n##|$)', content, re.MULTILINE | re.DOTALL)
         if desc_match:
             description = desc_match.group(1).strip()
-        else:
-            # Try to find any paragraph after the title
+        
+        # Pattern 2: Text immediately after the title (blockquote)
+        if not description:
+            desc_match = re.search(r'^#\s+.+\n\s*>\s*(.+?)(?:\n\n|\n##|$)', content, re.MULTILINE | re.DOTALL)
+            if desc_match:
+                description = desc_match.group(1).strip()
+        
+        # Pattern 3: Any paragraph after the title
+        if not description:
             desc_match = re.search(r'^#\s+.+\n\n(.+?)(?:\n\n|\n##|$)', content, re.MULTILINE | re.DOTALL)
             if desc_match:
                 description = desc_match.group(1).strip()
-            else:
-                # Try to find content between first and second heading
-                desc_match = re.search(r'^#\s+.+\n(.*?)(?:\n##|$)', content, re.MULTILINE | re.DOTALL)
-                description = desc_match.group(1).strip() if desc_match else ""
         
-        # Clean up description - remove markdown formatting and limit length
-        description = re.sub(r'[*_`#]', '', description)  # Remove markdown formatting
-        description = re.sub(r'\n+', ' ', description)    # Replace newlines with spaces
+        # Pattern 4: Any text between title and next heading
+        if not description:
+            desc_match = re.search(r'^#\s+.+\n(.*?)(?:\n##|$)', content, re.MULTILINE | re.DOTALL)
+            if desc_match:
+                description = desc_match.group(1).strip()
         
-        # Truncate if too long
-        if len(description) > 200:
-            description = description[:197] + "..."
+        # Pattern 5: First paragraph of the system prompt section
+        if not description:
+            system_prompt_match = re.search(r'##\s+System\s+Prompt\s*\n\s*```\s*\n(.+?)(?:\n\n|\n```|$)', content, re.MULTILINE | re.DOTALL)
+            if system_prompt_match:
+                first_para = system_prompt_match.group(1).strip().split('\n\n')[0]
+                description = first_para.strip()
+        
+        # Clean up description
+        if description:
+            # Remove markdown formatting
+            description = re.sub(r'[*_`#>]', '', description)
+            # Replace newlines with spaces
+            description = re.sub(r'\n+', ' ', description)
+            # Remove multiple spaces
+            description = re.sub(r'\s+', ' ', description)
             
+            # Truncate if too long
+            if len(description) > 200:
+                description = description[:197] + "..."
+        
         return title, description
     except Exception as e:
         print(f"Error extracting info from {file_path}: {e}")
