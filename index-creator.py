@@ -11,24 +11,61 @@ INDEX_START_MARKER = "<!-- START_SYSTEM_PROMPT_INDEX -->"
 INDEX_END_MARKER = "<!-- END_SYSTEM_PROMPT_INDEX -->"
 METADATA_FILE = ".prompt_index_metadata.json"
 
-def kebab_to_title_case(kebab_string):
-    """Convert kebab-case to Title Case."""
-    return ' '.join(word.capitalize() for word in kebab_string.split('-'))
+def format_category_name(category_path):
+    """Convert category path to human-readable format."""
+    # Split path into components
+    components = category_path.split(os.sep)
+    
+    # Convert each component from kebab/snake case to title case
+    formatted_components = []
+    for component in components:
+        # Replace hyphens and underscores with spaces
+        component = component.replace('-', ' ').replace('_', ' ')
+        # Title case
+        component = ' '.join(word.capitalize() for word in component.split())
+        formatted_components.append(component)
+    
+    # Join components with slashes for nested categories
+    return ' / '.join(formatted_components)
 
 def extract_markdown_info(file_path):
     """Extract title and description from markdown file."""
-    with open(file_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    
-    # Extract title from first header
-    title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
-    title = title_match.group(1).strip() if title_match else os.path.basename(file_path).replace('.md', '')
-    
-    # Extract description
-    desc_match = re.search(r'^##\s+Description\s*\n\s*(.+?)(?:\n\n|\n##|$)', content, re.MULTILINE | re.DOTALL)
-    description = desc_match.group(1).strip() if desc_match else ""
-    
-    return title, description
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Extract title from first header
+        title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
+        title = title_match.group(1).strip() if title_match else os.path.basename(file_path).replace('.md', '')
+        
+        # Extract description - try multiple patterns
+        # First try the standard format with "## Description" heading
+        desc_match = re.search(r'^##\s+Description\s*\n\s*(.+?)(?:\n\n|\n##|$)', content, re.MULTILINE | re.DOTALL)
+        
+        if desc_match:
+            description = desc_match.group(1).strip()
+        else:
+            # Try to find any paragraph after the title
+            desc_match = re.search(r'^#\s+.+\n\n(.+?)(?:\n\n|\n##|$)', content, re.MULTILINE | re.DOTALL)
+            if desc_match:
+                description = desc_match.group(1).strip()
+            else:
+                # Try to find content between first and second heading
+                desc_match = re.search(r'^#\s+.+\n(.*?)(?:\n##|$)', content, re.MULTILINE | re.DOTALL)
+                description = desc_match.group(1).strip() if desc_match else ""
+        
+        # Clean up description - remove markdown formatting and limit length
+        description = re.sub(r'[*_`#]', '', description)  # Remove markdown formatting
+        description = re.sub(r'\n+', ' ', description)    # Replace newlines with spaces
+        
+        # Truncate if too long
+        if len(description) > 200:
+            description = description[:197] + "..."
+            
+        return title, description
+    except Exception as e:
+        print(f"Error extracting info from {file_path}: {e}")
+        return os.path.basename(file_path).replace('.md', ''), ""
 
 def find_markdown_files(base_dir):
     """Find all markdown files in the repository."""
@@ -85,16 +122,13 @@ def generate_index(base_dir):
     # Collect information about all prompts
     prompts = []
     for file_path in markdown_files:
-        if not file_needs_processing(file_path, metadata["processed_files"]):
-            continue
-            
         try:
             title, description = extract_markdown_info(file_path)
             
             # Get category (parent folder name)
             rel_path = os.path.relpath(file_path, base_dir)
             category = os.path.dirname(rel_path)
-            category_display = kebab_to_title_case(category) if category else "Uncategorized"
+            category_display = format_category_name(category) if category else "Uncategorized"
             
             prompts.append({
                 "title": title,
@@ -110,37 +144,7 @@ def generate_index(base_dir):
             print(f"Error processing {file_path}: {e}")
     
     # Sort prompts alphabetically by title
-    all_prompts = []
-    
-    # Load existing prompts from metadata
-    for file_path, _ in metadata["processed_files"].items():
-        if file_path not in [p["file_path"] for p in prompts] and os.path.exists(file_path):
-            try:
-                title, description = extract_markdown_info(file_path)
-                rel_path = os.path.relpath(file_path, base_dir)
-                category = os.path.dirname(rel_path)
-                category_display = kebab_to_title_case(category) if category else "Uncategorized"
-                
-                all_prompts.append({
-                    "title": title,
-                    "description": description,
-                    "category": category_display,
-                    "path": rel_path
-                })
-            except Exception as e:
-                print(f"Error loading existing prompt {file_path}: {e}")
-    
-    # Add newly processed prompts
-    for prompt in prompts:
-        all_prompts.append({
-            "title": prompt["title"],
-            "description": prompt["description"],
-            "category": prompt["category"],
-            "path": prompt["path"]
-        })
-    
-    # Sort all prompts by title
-    all_prompts.sort(key=lambda x: x["title"].lower())
+    prompts.sort(key=lambda x: x["title"].lower())
     
     # Generate markdown
     index_md = f"{INDEX_START_MARKER}\n\n"
@@ -152,7 +156,7 @@ def generate_index(base_dir):
     index_md += "| Title | Category | Description |\n"
     index_md += "|-------|----------|-------------|\n"
     
-    for prompt in all_prompts:
+    for prompt in prompts:
         title_md = f"[{prompt['title']}]({prompt['path']})"
         index_md += f"| {title_md} | {prompt['category']} | {prompt['description']} |\n"
     
